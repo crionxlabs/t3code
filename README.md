@@ -1,134 +1,83 @@
-# T3 Code
+# AdelisOne app
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+The AdelisOne desktop app. Each employee installs it on their own computer. It runs AI work through the employee's own Claude Code or Codex sign-in, so usage counts against their subscription, not API credits. Business systems are reached only through the AdelisOne central service.
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
+This repository is a fork of [T3 Code](https://github.com/pingdotgg/t3code) (MIT license). AdelisOne changes stay small and separate, so updates from T3 Code merge cleanly.
 
-## "Wait, what are you selling me?"
+## Status
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
+Step 1 of the migration plan, the rebrand, is done:
 
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+| Area                 | AdelisOne value                                    |
+| -------------------- | -------------------------------------------------- |
+| App name             | AdelisOne (Alpha); dev builds show AdelisOne (Dev) |
+| App ID               | `com.crionx.adelisone`                             |
+| Data folder          | `~/.adelisone`                                     |
+| Icons                | AdelisOne mark in `assets/prod` and `assets/dev`   |
+| Command-line updates | Releases from `crionxlabs/t3code`                  |
 
-## Installation
+Still T3-branded:
 
-> [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
-> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
-> - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
+- The in-app T3 logo (`apps/web/src/components/T3Wordmark.tsx`), some messages, and macOS permission prompts.
+- The `t3` command and background service name, which change with the install script.
+- The `t3code://` link scheme.
+- Internal names: `@t3tools/*` packages and `T3CODE_*` settings. These stay on purpose to keep merges clean.
 
-### Command line
+There's no AdelisOne installer yet. The install script is a later step.
 
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
-```
+## Requirements
 
-On Windows, in PowerShell:
+- macOS, to build and run the Mac app
+- Node.js 24.13 or later
+- pnpm 11.10.0
+- At least one provider CLI, signed in:
+  - Claude Code: `claude auth login`
+  - Codex: `codex login`
 
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
-
-To try it once without installing, run `npx t3@latest` instead.
-
-### Desktop app
-
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
+## Run from source
 
 ```bash
-winget install T3Tools.T3Code
+pnpm install
+pnpm dev:desktop
 ```
 
-#### macOS (Homebrew)
+To check your changes:
 
 ```bash
-brew install --cask t3-code
+pnpm typecheck
+pnpm test
 ```
 
-#### Debian, Ubuntu (`.deb`)
+Signing and notarization for Mac release builds aren't set up yet.
 
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
+## Updates from T3 Code
+
+| Remote     | Repository          |
+| ---------- | ------------------- |
+| `origin`   | `crionxlabs/t3code` |
+| `upstream` | `pingdotgg/t3code`  |
+
+To bring in T3 Code updates:
 
 ```bash
-sudo apt install ./T3-Code-*.deb
+git fetch upstream
+git merge upstream/main
 ```
 
-#### Arch Linux (AUR)
+- Put new AdelisOne code in its own packages.
+- Keep edits to T3 Code's files small.
+- If `README.md` conflicts, keep this version.
 
-Stable:
+## T3 hosted services
 
-```bash
-yay -S t3code-bin
-```
+The T3 Connect relay, `app.t3.codes`, and T3's Clerk sign-in are off. Don't copy `.env.example` to `.env`, because that connects the app to T3's production services.
 
-Nightly:
+## Project docs
 
-```bash
-yay -S t3code-nightly-bin
-```
+- [A1 on a T3 Code base: migration plan](https://claude.ai/code/artifact/618d3be2-2a10-4ac6-bf79-91ae7fa94fa8)
+- [T3 hosted services left off in AdelisOne](https://claude.ai/code/artifact/017d6809-51cf-4398-8a6c-585d3b9aa92a)
+- T3 Code's own docs are in [`docs/`](./docs). They still describe T3 Code.
 
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
+## License
 
-## Some notes
-
-We are very very early in this project. Expect bugs.
-
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
-
-## Documentation
-
-Full docs live in [docs/](./docs). There's no docs site yet.
-
-- [Install and first run](./docs/user/install.md)
-- [Permission modes](./docs/user/permission-modes.md)
-- [Keyboard shortcuts](./docs/user/keybindings.md)
-- [Project settings](./docs/user/project-settings.md)
-- [Appearance preferences](./docs/user/appearance.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Keeping app and server in sync](./docs/user/updating.md)
-- [Source control integrations](./docs/user/source-control.md)
-- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
-
-Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
-vp i
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
-
-Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+MIT. T3 Code is copyright T3 Tools Inc. Keep the [`LICENSE`](./LICENSE) file.

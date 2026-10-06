@@ -14,6 +14,7 @@ import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
+import { adelisone } from "../../adelisone/vite.mjs";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -181,6 +182,7 @@ export default defineConfig(() => {
         presets: [reactCompilerPreset()],
       }),
       tailwindPlugins(bundledDev),
+      adelisone("web"),
     ],
     optimizeDeps: {
       include: [
