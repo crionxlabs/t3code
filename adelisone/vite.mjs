@@ -90,6 +90,24 @@ export function adelisone(target) {
     name: "adelisone",
     enforce: "pre",
 
+    // Lets override patches import AdelisOne modules ("~adelisone/x" resolves
+    // under adelisone/, with adelisone/web/ as a fallback for bare names),
+    // keeping A1 code in its own folder.
+    /** @param {string} source */
+    resolveId(source) {
+      if (!source.startsWith("~adelisone/")) return null;
+      const rest = source.slice("~adelisone/".length);
+      for (const base of [
+        NodePath.join(repoRoot, "adelisone", rest),
+        NodePath.join(repoRoot, "adelisone", "web", rest),
+      ]) {
+        for (const file of [base, `${base}.ts`, `${base}.tsx`, `${base}.mjs`]) {
+          if (NodeFS.existsSync(file) && NodeFS.statSync(file).isFile()) return file;
+        }
+      }
+      return null;
+    },
+
     // Overrides apply as T3's files are read, before any other plugin (such as
     // the React compiler) reshapes the code. TanStack Router loads parts of a
     // route file again under ?tsr-split and ?tsr-shared; those get the same

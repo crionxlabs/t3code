@@ -1,6 +1,8 @@
 // @ts-check
 // Node module hook: applies adelisone/overrides.mjs to T3's files as they
-// load. Every other module passes through unchanged.
+// load, and resolves "~adelisone/*" imports (added by overrides) to files
+// under adelisone/. Every other module passes through unchanged.
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -10,6 +12,27 @@ const repoRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../..",
 );
+
+/**
+ * @param {string} specifier
+ * @param {{ parentURL?: string | undefined }} context
+ * @param {(specifier: string, context: any) => Promise<{ url: string }>} nextResolve
+ */
+export async function resolve(specifier, context, nextResolve) {
+  if (!specifier.startsWith("~adelisone/")) return nextResolve(specifier, context);
+  const rest = specifier.slice("~adelisone/".length);
+  for (const base of [
+    NodePath.join(repoRoot, "adelisone", rest),
+    NodePath.join(repoRoot, "adelisone", "web", rest),
+  ]) {
+    for (const file of [base, `${base}.ts`, `${base}.tsx`, `${base}.mjs`]) {
+      if (NodeFS.existsSync(file) && NodeFS.statSync(file).isFile()) {
+        return { url: NodeURL.pathToFileURL(file).href, shortCircuit: true };
+      }
+    }
+  }
+  return nextResolve(specifier, context);
+}
 
 /**
  * @param {string} url

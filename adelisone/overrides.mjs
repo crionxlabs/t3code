@@ -315,6 +315,282 @@ export const REPLACEMENTS = {
     { find: 'executableName: "t3code",', replace: 'executableName: "adelisone",' },
     { find: 'StartupWMClass: "t3code",', replace: 'StartupWMClass: "adelisone",' },
   ],
+
+  // ── Dev sidebar backdrop ────────────────────────────────────────────────
+  // T3's dev builds draw a blueprint grid behind the sidebar header in fixed
+  // blues. AdelisOne keeps the dev tell but as a plain gradient built from the
+  // selected theme's own colors. The original art stays as dead code below the
+  // replacement so this override is one line of anchor.
+  "apps/web/src/components/SidebarStageBackdrop.tsx": [
+    {
+      find: "function DevBlueprintArt({ compact = false }: { compact?: boolean }) {",
+      replace:
+        'function DevBlueprintArt(_props: { compact?: boolean }) {\n  return (\n    <div\n      aria-hidden\n      className="h-full w-full"\n      style={{\n        background:\n          "linear-gradient(135deg, color-mix(in oklab, var(--primary) 30%, var(--sidebar)), var(--sidebar) 85%)",\n      }}\n    />\n  );\n}\n\nfunction DevBlueprintArtUnused({ compact = false }: { compact?: boolean }) {',
+    },
+  ],
+
+  // ── Settled-thread banner ────────────────────────────────────────────────
+  // "This thread is settled — send a message to unsettle" confuses non-technical
+  // users (every imported chat is settled). Drop the settled banner; the snooze
+  // banner is unchanged.
+  "apps/web/src/components/ChatView.tsx": [
+    {
+      find: "if (!activeThreadSnoozed && !activeThreadSettled) {",
+      replace: "if (!activeThreadSnoozed) {",
+    },
+  ],
+
+  // ── Imported-chat recency ────────────────────────────────────────────────
+  // T3 only imports agent sessions touched in the last 30 days. AdelisOne
+  // imports whole claude.ai / ChatGPT histories, which keep their original
+  // (often older) dates, so the window is widened to ~100 years.
+  "apps/server/src/project/AgentSessionScanner.ts": [
+    {
+      find: "const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;",
+      replace: "const RECENT_THREAD_WINDOW_MS = 36500 * 24 * 60 * 60 * 1000;",
+    },
+  ],
+
+  // ── URL scheme ──────────────────────────────────────────────────────────
+  // The custom protocol the packaged renderer is served over (shown in the
+  // window/devtools title). t3code:// → adelisone://. The scheme is the
+  // renderer's origin, so every place that trusts that origin — the server's
+  // CORS allowlist and the provider auth-handoff/return validators — must move
+  // together, or the renderer can't reach its own server.
+  "apps/desktop/src/electron/ElectronProtocol.ts": [
+    {
+      find: 'const DESKTOP_PRODUCTION_SCHEME = "t3code";',
+      replace: 'const DESKTOP_PRODUCTION_SCHEME = "adelisone";',
+    },
+    {
+      find: 'const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";',
+      replace: 'const DESKTOP_DEVELOPMENT_SCHEME = "adelisone-dev";',
+    },
+  ],
+  "scripts/build-desktop-artifact.ts": [
+    {
+      find: 'schemes: ["t3code", "t3code-dev"],',
+      replace: 'schemes: ["adelisone", "adelisone-dev"],',
+      count: 2,
+    },
+  ],
+  "apps/server/src/http.ts": [
+    {
+      find: 'const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];',
+      replace: 'const DESKTOP_RENDERER_ORIGINS = ["adelisone://app", "adelisone-dev://app"];',
+    },
+  ],
+  "packages/shared/src/codexAuthHandoff.ts": [
+    {
+      find: 'new URL(`${development ? "t3code-dev" : "t3code"}://auth/codex`)',
+      replace: 'new URL(`${development ? "adelisone-dev" : "adelisone"}://auth/codex`)',
+    },
+    {
+      find: 'url.protocol !== (development ? "t3code-dev:" : "t3code:")',
+      replace: 'url.protocol !== (development ? "adelisone-dev:" : "adelisone:")',
+    },
+  ],
+  "packages/shared/src/providerAuthReturnUrl.ts": [
+    {
+      find: 'const desktop = ["t3code:", "t3code-dev:"].includes(url.protocol) && url.host === "app";',
+      replace:
+        'const desktop = ["adelisone:", "adelisone-dev:"].includes(url.protocol) && url.host === "app";',
+    },
+  ],
+
+  // ── Imported Library button (adelisone/web/ImportedLibraryPanel.tsx) ────
+  // A sidebar-header button opening the Memory / Artifacts / Project docs views
+  // for imported reference content, kept separate from the thread list.
+  "apps/web/src/components/sidebar/SidebarThreadHeader.tsx": [
+    {
+      find: 'import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";',
+      replace:
+        'import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";\nimport { ImportedLibraryButton } from "~adelisone/web/ImportedLibraryPanel";',
+    },
+    {
+      find: '        <SidebarHeaderIconButton\n          label="New thread"',
+      replace:
+        '        <ImportedLibraryButton />\n        <SidebarHeaderIconButton\n          label="New thread"',
+    },
+  ],
+
+  // ── Chat import (adelisone/server/importChatsRoute.ts) ──────────────────
+  // Upload route for claude.ai / ChatGPT data exports; the Settings → General
+  // row below provides the drag-and-drop UI.
+  "apps/server/src/server.ts": [
+    {
+      find: 'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";',
+      replace:
+        'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";\nimport { a1ImportChatsRouteLayer, a1LibraryRouteLayer, a1LibraryUpdateRouteLayer } from "~adelisone/server/importChatsRoute.ts";',
+    },
+    {
+      find: "    attachmentUploadRouteLayer,",
+      replace:
+        "    attachmentUploadRouteLayer,\n    a1ImportChatsRouteLayer,\n    a1LibraryRouteLayer,\n    a1LibraryUpdateRouteLayer,",
+    },
+  ],
+
+  // ── Simplified interface (adelisone/web/simplifiedUi.ts) ────────────────
+  // AdelisOne serves non-technical users: git vocabulary (branches, source
+  // control, submodules) is hidden by default; Settings → General has the
+  // toggle. The checkpoint/undo machinery is untouched. The update track is
+  // removed outright — AdelisOne has its own release channel.
+  "apps/web/src/components/BranchPicker.tsx": [
+    {
+      find: 'import type { VcsRef } from "@t3tools/contracts";',
+      replace:
+        'import type { VcsRef } from "@t3tools/contracts";\nimport { useSimplifiedUi } from "~adelisone/simplifiedUi";',
+    },
+    {
+      find: "export function BranchPicker({",
+      replace:
+        "export function BranchPicker(props: Parameters<typeof BranchPickerInner>[0]) {\n  if (useSimplifiedUi()) return null;\n  return <BranchPickerInner {...props} />;\n}\n\nfunction BranchPickerInner({",
+    },
+  ],
+  "apps/web/src/components/GitActionsControl.tsx": [
+    // Commit / Push / Create PR are publishing actions for shared code repos;
+    // A1 employees deliver work through MCP approvals, so these have no
+    // non-technical translation — the control disappears entirely.
+    {
+      find: 'import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";',
+      replace:
+        'import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";\nimport { useSimplifiedUi } from "~adelisone/simplifiedUi";',
+    },
+    {
+      find: "export default function GitActionsControl({",
+      replace:
+        "export default function GitActionsControl(props: Parameters<typeof GitActionsControlInner>[0]) {\n  if (useSimplifiedUi()) return null;\n  return <GitActionsControlInner {...props} />;\n}\n\nfunction GitActionsControlInner({",
+    },
+  ],
+  "apps/web/src/components/settings/SettingsSidebarNav.tsx": [
+    {
+      find: "export function SettingsSidebarNav({ pathname }: { pathname: string }) {",
+      replace:
+        'import { useSimplifiedUi } from "~adelisone/simplifiedUi";\n\nexport function SettingsSidebarNav({ pathname }: { pathname: string }) {\n  const simplifiedUi = useSimplifiedUi();',
+    },
+    {
+      find: '(item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),',
+      replace:
+        '(item) =>\n      (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&\n      !(simplifiedUi && item.to === "/settings/source-control"),',
+    },
+  ],
+  "apps/web/src/components/Sidebar.tsx": [
+    // Non-technical default: the New thread button starts without a project
+    // (the scratch/"start without a project" path) instead of dropping new
+    // chats into whatever project was last used (e.g. Imported Conversations).
+    {
+      find: '  usePrimaryEnvironmentId,\n} from "../state/environments";',
+      replace:
+        '  usePrimaryEnvironmentId,\n} from "../state/environments";\nimport { useScratchProject } from "../hooks/useScratchProject";\nimport { readSimplifiedUi, useSimplifiedUi } from "~adelisone/simplifiedUi";',
+    },
+    {
+      // Hide the "No project" chip on loose chats in simplified mode (claude.ai
+      // shows no project label on standalone chats). Real project names stay.
+      find: '              {props.project ? (\n                <ProjectFavicon project={props.project} className="size-4 shrink-0" />\n              ) : null}\n              {props.projectDisplayName ? (',
+      replace:
+        '              {props.project && !(readSimplifiedUi() && props.projectDisplayName === "No project") ? (\n                <ProjectFavicon project={props.project} className="size-4 shrink-0" />\n              ) : null}\n              {props.projectDisplayName && !(readSimplifiedUi() && props.projectDisplayName === "No project") ? (',
+    },
+    {
+      find: "  const handleNewThreadClick = useCallback(\n    (event?: ReactMouseEvent) => {",
+      replace:
+        "  const a1Scratch = useScratchProject();\n  const a1Simplified = useSimplifiedUi();\n  const a1PrimaryEnv = usePrimaryEnvironmentId();\n  const handleNewThreadClick = useCallback(\n    (event?: ReactMouseEvent) => {\n      if (a1Simplified) {\n        const a1Env = a1Scratch.scratchEnvironmentId(\n          newThreadContext.defaultProjectRef?.environmentId ?? a1PrimaryEnv,\n        );\n        if (a1Env) {\n          if (isMobile) setOpenMobile(false);\n          void a1Scratch.startScratchThread(a1Env);\n          return;\n        }\n      }",
+    },
+    {
+      find: "    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],",
+      replace:
+        "    [isMobile, newThreadContext, projectGroups.length, setOpenMobile, a1Scratch, a1Simplified, a1PrimaryEnv],",
+    },
+  ],
+  "apps/web/src/components/NoProjectsHero.tsx": [
+    // With no projects, auto-start a project-less (scratch) chat so the user
+    // lands on a typeable composer — no "Start without a project" click needed.
+    {
+      find: 'import { useCallback } from "react";',
+      replace: 'import { useCallback, useEffect, useRef } from "react";',
+    },
+    {
+      find: 'import { useScratchProject } from "../hooks/useScratchProject";',
+      replace:
+        'import { useScratchProject } from "../hooks/useScratchProject";\nimport { useSimplifiedUi } from "~adelisone/simplifiedUi";',
+    },
+    {
+      find: "  const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);",
+      replace:
+        "  const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);\n  const a1Simplified = useSimplifiedUi();\n  const a1StartedRef = useRef(false);\n  useEffect(() => {\n    if (a1Simplified && scratchTargetEnvironmentId && !a1StartedRef.current) {\n      a1StartedRef.current = true;\n      void startScratchThread(scratchTargetEnvironmentId);\n    }\n  }, [a1Simplified, scratchTargetEnvironmentId, startScratchThread]);",
+    },
+  ],
+  "apps/server/src/project/ManagedProjectFolders.ts": [
+    {
+      // Always offer project-less (scratch) chats, and put the folder OUTSIDE
+      // the data dir. The agent-session importer excludes anything under the
+      // data dir, so a scratch folder there can't receive imported chats; a
+      // sibling (~/AdelisOne Chats) is importable and still shows as loose.
+      find: '      Effect.map((isRepository) =>\n        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),\n      ),',
+      replace:
+        '      Effect.map(() => Option.some(path.resolve(config.baseDir, "..", "AdelisOne Chats"))),',
+    },
+  ],
+  "apps/web/src/components/sidebar/SidebarChrome.tsx": [
+    // Sidebar brand reads "[mark] Code" (was "T3 Code"); make it say AdelisOne.
+    {
+      find: "      >\n        Code\n      </span>",
+      replace: "      >\n        AdelisOne\n      </span>",
+    },
+    {
+      find: 'import { usePullRequestsSupported } from "../../state/environments";',
+      replace:
+        'import { usePullRequestsSupported } from "../../state/environments";\nimport { useSimplifiedUi } from "~adelisone/simplifiedUi";',
+    },
+    {
+      find: "  const pullRequestsSupported = usePullRequestsSupported();",
+      replace:
+        "  const pullRequestsSupported = usePullRequestsSupported();\n  const simplifiedUi = useSimplifiedUi();",
+    },
+    {
+      find: "          {pullRequestsSupported ? (",
+      replace: "          {pullRequestsSupported && !simplifiedUi ? (",
+    },
+  ],
+  "apps/web/src/components/settings/ProjectDefaultsSettings.tsx": [
+    {
+      find: 'import { createModelSelection } from "@t3tools/shared/model";',
+      replace:
+        'import { createModelSelection } from "@t3tools/shared/model";\nimport { useSimplifiedUi } from "~adelisone/simplifiedUi";',
+    },
+    {
+      find: 'const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);',
+      replace:
+        'const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);\n  const simplifiedUi = useSimplifiedUi();',
+    },
+    {
+      find: '{workspaceRow}\n          <SettingsRow\n            serverScoped\n            settingKeys={["worktreeSubmodules"]}',
+      replace:
+        '{workspaceRow}\n          {simplifiedUi ? null : (\n          <SettingsRow\n            serverScoped\n            settingKeys={["worktreeSubmodules"]}',
+    },
+    {
+      find: '          />\n        </>\n      ) : category === "source-control" ? (',
+      replace:
+        '          />\n          )}\n        </>\n      ) : category === "source-control" ? (',
+    },
+  ],
+  "apps/web/src/components/settings/SettingsPanels.tsx": [
+    {
+      find: 'import { Switch } from "../ui/switch";',
+      replace:
+        'import { Switch } from "../ui/switch";\nimport { setSimplifiedUi, useSimplifiedUi } from "~adelisone/simplifiedUi";\nimport { ImportChatsButton } from "~adelisone/web/ImportChatsDialog";',
+    },
+    // Update track rows removed (both the desktop and hosted variants).
+    { find: "{hasDesktopBridge ? (", replace: "{false && hasDesktopBridge ? (" },
+    {
+      find: ") : selectedHostedAppChannel ? (",
+      replace: ") : false && selectedHostedAppChannel ? (",
+    },
+    {
+      find: "{showNightlyMobileBeta ? <NightlyMobileBetaRow /> : null}",
+      replace:
+        '<SettingsRow\n        title="Simplified interface"\n        description="Hides developer surfaces such as branches and source control. The undo system keeps running either way."\n        control={\n          <Switch\n            aria-label="Simplified interface"\n            checked={useSimplifiedUi()}\n            onCheckedChange={setSimplifiedUi}\n          />\n        }\n      />\n      <SettingsRow\n        title="Import conversations"\n        description="Bring in past chats from a claude.ai or ChatGPT data export."\n        control={<ImportChatsButton />}\n      />\n      {showNightlyMobileBeta ? <NightlyMobileBetaRow /> : null}',
+    },
+  ],
 };
 
 /**
