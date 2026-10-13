@@ -98,6 +98,12 @@ const MAX_IMPORT_RECORDS = 100_000;
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String),
+  // AdelisOne import carries inline image attachments as transcript blocks
+  // ({ type: "image", mimeType, data (base64), name }); the importer turns
+  // these into real chat attachments.
+  mimeType: Schema.optional(Schema.String),
+  data: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
 });
 
 const TranscriptMessage = Schema.Struct({
@@ -155,6 +161,12 @@ export interface AgentSessionThreadMessage {
   readonly role: "user" | "assistant";
   readonly text: string;
   readonly createdAt: string;
+  /** AdelisOne import: inline image attachments (base64), carried to the importer. */
+  readonly attachments?: ReadonlyArray<{
+    readonly mimeType: string;
+    readonly data: string;
+    readonly name: string;
+  }>;
 }
 
 export interface AgentSessionThread {
@@ -263,6 +275,24 @@ function extractText(
     .map((block) => block.text?.trim() ?? "")
     .filter((text) => text.length > 0)
     .join("\n");
+}
+
+/** AdelisOne import: pull inline image blocks out of a transcript message. */
+function extractAttachments(
+  content: string | ReadonlyArray<typeof TranscriptContentBlock.Type> | undefined,
+): ReadonlyArray<{ readonly mimeType: string; readonly data: string; readonly name: string }> {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block) =>
+    block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string"
+      ? [
+          {
+            mimeType: block.mimeType,
+            data: block.data,
+            name: typeof block.name === "string" && block.name.length > 0 ? block.name : "image",
+          },
+        ]
+      : [],
+  );
 }
 
 function normalizeTimestamp(value: string | undefined, fallback: string): string {
@@ -414,10 +444,13 @@ function parseAgentSessionRecords(
       }
 
       const text = extractText(record.message?.content);
-      if (text.length === 0) continue;
+      const attachments = extractAttachments(record.message?.content);
+      // An image-only message has no text but must still be kept.
+      if (text.length === 0 && attachments.length === 0) continue;
       retainMessage({
         role: record.type,
         text,
+        ...(attachments.length > 0 ? { attachments } : {}),
         createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
         codexResponseUser: false,
       });

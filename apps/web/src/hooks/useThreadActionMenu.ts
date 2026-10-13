@@ -7,7 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { ProjectId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
@@ -93,6 +93,7 @@ export function useThreadActionMenu(input: {
     archiveThread,
     deleteThread,
     markThreadUnread,
+    moveThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -141,6 +142,13 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const moveTargets = projects
+          .filter((project) => project.environmentId === threadRef.environmentId)
+          .map((project) => ({
+            projectId: project.id,
+            label: project.title,
+            isCurrent: project.id === thread.projectId,
+          }));
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           projectFilter: null,
@@ -153,6 +161,8 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           supports,
           snoozePresets,
+          // Only worth showing when there's somewhere else to move it.
+          moveTargets: moveTargets.length > 1 ? moveTargets : [],
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -178,6 +188,11 @@ export function useThreadActionMenu(input: {
             failureToast(title, squashAtomCommandFailure(result));
           }
         };
+        if (action.startsWith("move:")) {
+          const toProjectId = action.slice("move:".length) as ProjectId;
+          await reportFailure("Failed to move thread", () => moveThread(threadRef, toProjectId));
+          return;
+        }
         switch (action) {
           case "project-settings": {
             const project = projects.find(
@@ -335,6 +350,7 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
+      moveThread,
       onStartRename,
       pinThread,
       projectCwd,

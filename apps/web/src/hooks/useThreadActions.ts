@@ -7,7 +7,7 @@ import {
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type ProjectId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -27,6 +27,7 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
+import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentSupportsPinning,
@@ -251,6 +252,9 @@ export function useThreadActions() {
   const unarchiveThreadMutation = useAtomCommand(threadEnvironment.unarchive, {
     reportFailure: false,
   });
+  const moveThreadMutation = useAtomCommand(threadEnvironment.move, {
+    reportFailure: false,
+  });
   const deleteThreadMutation = useAtomCommand(threadEnvironment.delete, {
     reportFailure: false,
   });
@@ -344,6 +348,53 @@ export function useThreadActions() {
       return result;
     },
     [router, unarchiveThreadMutation],
+  );
+
+  /** Moves a thread into another project (e.g. filing an imported loose chat). */
+  const moveThread = useCallback(
+    async (target: ScopedThreadRef, toProjectId: ProjectId) => {
+      // Imported chats store their transcript under their project's folder, so a
+      // move must relocate the session file (keyed to that folder) to keep the
+      // chat resumable in its new project. Imported thread ids are
+      // `import:<provider>:<sessionId>`.
+      if (target.threadId.startsWith("import:")) {
+        const thread = readThreadShell(target);
+        const fromProject = thread
+          ? readProject({ environmentId: target.environmentId, projectId: thread.projectId })
+          : null;
+        const toProject = readProject({
+          environmentId: target.environmentId,
+          projectId: toProjectId,
+        });
+        const sessionId = target.threadId.split(":").pop() ?? "";
+        if (
+          fromProject &&
+          toProject &&
+          sessionId.length > 0 &&
+          fromProject.workspaceRoot !== toProject.workspaceRoot
+        ) {
+          const bearerToken = await readDesktopPrimaryBearerToken().catch(() => null);
+          await fetch("/api/a1/relocate-session", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "content-type": "application/json",
+              ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
+            },
+            body: JSON.stringify({
+              sessionId,
+              fromWorkspaceRoot: fromProject.workspaceRoot,
+              toWorkspaceRoot: toProject.workspaceRoot,
+            }),
+          }).catch(() => {});
+        }
+      }
+      return moveThreadMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, toProjectId },
+      });
+    },
+    [moveThreadMutation],
   );
 
   const archiveThread = useCallback(
@@ -961,6 +1012,7 @@ export function useThreadActions() {
     () => ({
       archiveThread,
       unarchiveThread,
+      moveThread,
       deleteThread,
       confirmAndDeleteThread,
       settleThread,
@@ -981,6 +1033,7 @@ export function useThreadActions() {
       confirmAndUnpinThread,
       deleteThread,
       markThreadUnread,
+      moveThread,
       pinThread,
       reorderPinnedThread,
       reorderActiveThread,

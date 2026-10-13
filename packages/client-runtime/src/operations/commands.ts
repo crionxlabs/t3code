@@ -120,6 +120,11 @@ export interface VisitThreadInput extends ThreadCommandInput {
 
 export type MarkThreadUnreadInput = ThreadCommandInput;
 
+export interface MoveThreadInput extends ThreadCommandInput {
+  /** Project to move the thread into. */
+  readonly toProjectId: ProjectId;
+}
+
 export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecoveryUpdate | null;
   readonly title?: string;
@@ -427,6 +432,18 @@ export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(functi
   input: DeleteThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.delete", input);
+});
+
+export const moveThread = Effect.fn("EnvironmentCommands.moveThread")(function* (
+  input: MoveThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  return yield* dispatch({
+    type: "thread.move",
+    commandId,
+    threadId: input.threadId,
+    toProjectId: input.toProjectId,
+  });
 });
 
 export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (

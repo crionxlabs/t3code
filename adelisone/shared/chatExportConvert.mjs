@@ -1,11 +1,12 @@
 // @ts-check
 /**
- * Converts a claude.ai or ChatGPT data export into Claude Code session JSONL
- * files that AdelisOne's session importer can scan. Everything in the export is
- * brought in as a viewable thread: conversations, project knowledge docs,
- * Claude memory (profile, per-project, memory files), and artifacts/pages.
- * Used by the upload route (adelisone/server/importChatsRoute.ts). Text only;
- * images and tool output in conversations are skipped.
+ * Converts a claude.ai or ChatGPT data export. Conversations become Claude Code
+ * session JSONL files (imported as loose threads). Claude project docs +
+ * instructions are returned as `library.docs` grouped by project name (the
+ * route turns each group into a real A1 project); Claude memory and artifacts
+ * are returned as `library.memory` / `library.artifacts`. Used by the upload
+ * route (adelisone/server/importChatsRoute.ts). Written text only; images,
+ * attachments, and tool/reasoning output in conversations are skipped.
  */
 
 /** @param {unknown} value @returns {string} */
@@ -97,8 +98,12 @@ function fromClaudeAi(conversation, fallbackDate) {
   };
 }
 
-/** ChatGPT conversation (mapping tree) → thread. @param {any} conversation @param {string} fallbackDate */
-function fromChatGpt(conversation, fallbackDate) {
+/**
+ * ChatGPT conversation (mapping tree) → thread.
+ * @param {any} conversation @param {string} fallbackDate
+ * @param {((assetId: string) => { mimeType: string; data: string; name: string } | null) | null} [resolveAsset]
+ */
+function fromChatGpt(conversation, fallbackDate, resolveAsset = null) {
   const mapping = conversation.mapping ?? {};
   const chain = [];
   let nodeId = text(conversation.current_node) || null;
@@ -125,10 +130,37 @@ function fromChatGpt(conversation, fallbackDate) {
     if (message.metadata?.is_visually_hidden_from_conversation === true) continue;
     const content = message.content;
     let body = "";
-    if (content?.content_type === "text" && Array.isArray(content.parts))
+    // "text" is plain; "multimodal_text" interleaves string parts with image
+    // asset pointers — keep the strings so no written text is lost (the images
+    // are handled by the attachment import).
+    if (
+      (content?.content_type === "text" || content?.content_type === "multimodal_text") &&
+      Array.isArray(content.parts)
+    )
       body = content.parts.filter((/** @type {unknown} */ p) => typeof p === "string").join("\n\n");
-    if (!body.trim()) continue;
-    messages.push({ role, text: body, createdAt: toIso(message.create_time, fallbackTime) });
+    // Pull image parts out of a multimodal message so they import as inline
+    // attachments. resolveAsset reads the bytes off disk (folder-path import).
+    const attachments = [];
+    if (
+      resolveAsset &&
+      content?.content_type === "multimodal_text" &&
+      Array.isArray(content.parts)
+    ) {
+      for (const part of content.parts) {
+        if (part && typeof part === "object" && typeof part.asset_pointer === "string") {
+          const assetId = part.asset_pointer.replace(/^(?:file-service|sediment):\/\//, "");
+          const resolved = resolveAsset(assetId);
+          if (resolved) attachments.push(resolved);
+        }
+      }
+    }
+    if (!body.trim() && attachments.length === 0) continue;
+    messages.push({
+      role,
+      text: body,
+      createdAt: toIso(message.create_time, fallbackTime),
+      ...(attachments.length > 0 ? { attachments } : {}),
+    });
   }
   return {
     seed: text(conversation.conversation_id) || text(conversation.id) || null,
@@ -154,7 +186,20 @@ function emit(thread, projectDir, seen) {
       cwd: projectDir,
       ...(i === 0 ? { aiTitle: thread.title } : {}),
       timestamp: m.createdAt,
-      message: { role: m.role, content: [{ type: "text", text: m.text }] },
+      message: {
+        role: m.role,
+        content: [
+          ...(m.text ? [{ type: "text", text: m.text }] : []),
+          // Inline images ride as transcript blocks the session importer turns
+          // into real chat attachments (adelisone/.../AgentSessionImporter).
+          ...(m.attachments ?? []).map((/** @type {any} */ a) => ({
+            type: "image",
+            mimeType: a.mimeType,
+            data: a.data,
+            name: a.name,
+          })),
+        ],
+      },
     }),
   );
   return {
@@ -165,11 +210,12 @@ function emit(thread, projectDir, seen) {
 }
 
 /**
- * Convert a whole export. Conversations become Claude Code session files (one
- * "Imported Conversations" project, imported as threads). Memory, artifacts, and
- * project docs are NOT threads — they're returned as `library` items (reference
- * content) for the A1 Library views. Entries are `{ path, content }` for every
- * file in the dropped zip(s) or folder, so artifacts pair with their content file.
+ * Convert a whole export. Conversations become Claude Code session files
+ * (attached to the no-project scratch folder, so they import as loose threads).
+ * Memory, artifacts, and project docs are NOT threads — they're returned as
+ * `library` items; the route stores memory/artifacts and turns docs into real
+ * A1 projects. Entries are `{ path, content }` for every file in the dropped
+ * zip(s) or folder, so artifacts pair with their content file.
  * @param {ReadonlyArray<{ path: string; content: string }>} entries
  * @param {string} baseDir absolute folder the Library store lives under
  * @param {string} nowIso fallback date for content that carries none
@@ -185,10 +231,17 @@ function emit(thread, projectDir, seen) {
  * }}
  * @typedef {{ id: string; title: string; date: string; content: string; group?: string }} LibraryItem
  */
-export function convertExport(entries, baseDir, nowIso, convDir = null) {
-  // Conversations only convert when a target folder (the no-project scratch
-  // folder) is given, so they never land in a named "Imported" project.
-  const conversationProjectDir = convDir;
+export function convertExport(entries, baseDir, nowIso, convDirs = null, resolveAsset = null) {
+  // convDirs is either a string (all conversations into one folder) or
+  // { claude, chatgpt } to bucket conversations into per-provider folders.
+  const dirForKind = (/** @type {"claude" | "chatgpt"} */ kind) => {
+    if (!convDirs) return null;
+    if (typeof convDirs === "string") return convDirs;
+    return (kind === "claude" ? convDirs.claude : convDirs.chatgpt) ?? null;
+  };
+  const anyConvDir =
+    typeof convDirs === "string" ? convDirs : (convDirs?.claude ?? convDirs?.chatgpt ?? null);
+  const conversationProjectDir = anyConvDir;
   const conversationFiles = [];
   const convSeen = new Set();
   /** @type {{ memory: any[]; artifacts: any[]; docs: any[] }} */
@@ -278,6 +331,25 @@ export function convertExport(entries, baseDir, nowIso, convDir = null) {
       !parsed.chat_messages
     ) {
       const name = text(parsed.name) || `Claude ${text(parsed.uuid).slice(0, 8)}`;
+      // The project's description + custom instructions become a CLAUDE.md at
+      // the project root, so a new chat in the imported project inherits the
+      // same knowledge and system prompt the Claude project had.
+      const instructionParts = [
+        text(parsed.description).trim(),
+        text(parsed.prompt_template).trim(),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      if (instructionParts) {
+        addLib(
+          "docs",
+          `${parsed.uuid}-instructions`,
+          "CLAUDE.md",
+          toIso(parsed.created_at, nowIso),
+          `# ${name}\n\n${instructionParts}\n`,
+          name,
+        );
+      }
       for (const doc of parsed.docs) {
         addLib(
           "docs",
@@ -329,12 +401,15 @@ export function convertExport(entries, baseDir, nowIso, convDir = null) {
       continue;
     }
 
-    // Conversations → session files (threads). Skipped entirely without a
-    // target folder, so no fallback "Imported" project is ever created.
-    if (!conversationProjectDir) continue;
+    // Conversations → session files (threads), each routed to its provider's
+    // folder so they import under the right bucket. Skipped entirely without a
+    // target folder.
+    if (!anyConvDir) continue;
     for (const { kind, conversation } of collectConversations(parsed)) {
       const thread =
-        kind === "claude" ? fromClaudeAi(conversation, nowIso) : fromChatGpt(conversation, nowIso);
+        kind === "claude"
+          ? fromClaudeAi(conversation, nowIso)
+          : fromChatGpt(conversation, nowIso, resolveAsset);
       if (!thread || thread.messages.length === 0) {
         skippedDetails.push({
           title: thread?.title ?? "(untitled)",
@@ -342,8 +417,10 @@ export function convertExport(entries, baseDir, nowIso, convDir = null) {
         });
         continue;
       }
-      const file = emit(thread, conversationProjectDir, convSeen);
-      if (file) conversationFiles.push(file);
+      const projectDir = dirForKind(kind);
+      if (!projectDir) continue;
+      const file = emit(thread, projectDir, convSeen);
+      if (file) conversationFiles.push({ ...file, convDir: projectDir, provider: kind });
     }
   }
 

@@ -2513,6 +2513,17 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
   }),
+  /**
+   * AdelisOne: move a thread into another project. Reuses the
+   * `thread.metadata-updated` event (the whole thread is re-emitted with the
+   * new projectId), so no projection or replay changes are needed.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.move"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    toProjectId: ProjectId,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,

@@ -170,6 +170,23 @@ describe("buildThreadActionMenuItems", () => {
     );
     expect(archiveItem?.disabled).toBe(true);
   });
+
+  it("offers a Move to project submenu, marking and disabling the current project", () => {
+    const move = buildThreadActionMenuItems({
+      ...baseState,
+      moveTargets: [
+        { projectId: "p1", label: "Alpha", isCurrent: true },
+        { projectId: "p2", label: "Beta", isCurrent: false },
+      ],
+    }).find((item) => item.id === "move");
+    expect(move?.label).toBe("Move to project");
+    expect(move?.children?.map((child) => [child.id, child.checked, child.disabled])).toEqual([
+      ["move:p1", true, true],
+      ["move:p2", false, false],
+    ]);
+    // Hidden when there is nowhere to move the thread.
+    expect(ids(baseState)).not.toContain("move");
+  });
 });
 
 describe("buildDraftActionMenuItems", () => {

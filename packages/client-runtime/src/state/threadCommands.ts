@@ -51,6 +51,7 @@ import {
   type UnpinThreadInput,
   type WatchThreadPullRequestInput,
   type UnsettleThreadInput,
+  type MoveThreadInput,
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
   type VisitThreadInput,
@@ -63,6 +64,7 @@ import {
   forkThreadFromRun,
   markThreadUnread,
   mergeThreadBack,
+  moveThread,
   promoteQueuedRun,
   reorderQueuedRun,
   resumeThreadQueue,
@@ -169,6 +171,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     unarchive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unarchive",
       execute: (input: UnarchiveThreadInput) => unarchiveThread(input),
+      scheduler,
+      concurrency,
+    }),
+    move: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:move",
+      execute: (input: MoveThreadInput) => moveThread(input),
       scheduler,
       concurrency,
     }),

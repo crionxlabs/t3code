@@ -405,6 +405,7 @@ import { useProjectClone } from "../state/projectClones";
 import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  readProject,
   resolveThreadDetailRef,
   useProject,
   useProjects,
@@ -1527,7 +1528,7 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, moveThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -2660,6 +2661,28 @@ export default function ChatView(props: ChatViewProps) {
     [navigate, setEnvironmentEnabled],
   );
   const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  // AdelisOne: an imported chat lives in a provider bucket project ("Claude" /
+  // "ChatGPT"). The first time it's continued, graduate it to a normal loose
+  // chat by moving it to the no-project home. moveThread relocates the session
+  // so it stays resumable; failures never block the send.
+  const maybeGraduateBucketedChat = useCallback(
+    async (thread: { id: ThreadId; environmentId: EnvironmentId; projectId: ProjectId }) => {
+      try {
+        if (!thread.id.startsWith("import:")) return;
+        const project = readProject({
+          environmentId: thread.environmentId,
+          projectId: thread.projectId,
+        });
+        if (!project || !project.workspaceRoot.includes("AdelisOne Imported Chats")) return;
+        const scratchProject = await openScratchProject(thread.environmentId);
+        if (!scratchProject || scratchProject.id === thread.projectId) return;
+        await moveThread(scopeThreadRef(thread.environmentId, thread.id), scratchProject.id);
+      } catch {
+        // Graduation is best-effort; never let it block continuing the chat.
+      }
+    },
+    [moveThread, openScratchProject],
+  );
   const activeProjectIsScratch =
     activeProject !== null &&
     isScratchProject(
@@ -10034,6 +10057,10 @@ export default function ChatView(props: ChatViewProps) {
         streaming: false,
       },
     ]);
+
+    // Graduate a bucketed imported chat to a loose chat before the turn starts,
+    // so the continuation launches in its new (relocated) folder.
+    await maybeGraduateBucketedChat(activeThread);
 
     const settingsResult = await persistThreadSettingsForNextTurn({
       threadId: threadIdForSend,

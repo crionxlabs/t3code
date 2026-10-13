@@ -23,6 +23,9 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  // AdelisOne: move a thread into another project; one child per destination.
+  | "move"
+  | `move:${string}`
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -89,6 +92,16 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  /**
+   * AdelisOne: destination projects for "Move to project". Omit or leave empty
+   * to hide the item (e.g. an environment with a single project). The thread's
+   * current project is marked so the submenu shows where it lives now.
+   */
+  readonly moveTargets?: ReadonlyArray<{
+    readonly projectId: string;
+    readonly label: string;
+    readonly isCurrent: boolean;
+  }>;
   readonly supports: {
     readonly settlement: boolean;
     /** Server understands thread.auto-settle.set. */
@@ -166,6 +179,21 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.moveTargets && state.moveTargets.length > 0
+      ? [
+          {
+            id: "move" as const,
+            label: "Move to project",
+            icon: "folder-input",
+            children: state.moveTargets.map((target) => ({
+              id: `move:${target.projectId}` as const,
+              label: target.label,
+              checked: target.isCurrent,
+              disabled: target.isCurrent,
+            })),
+          },
+        ]
+      : []),
     ...(state.projectFilter
       ? [
           {

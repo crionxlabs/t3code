@@ -16,6 +16,8 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import * as Schema from "effect/Schema";
 import {
   DndContext,
+  PointerSensor,
+  closestCenter,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -23,7 +25,7 @@ import {
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable } from "@dnd-kit/sortable";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -41,7 +43,6 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import {
-  resolveThreadProviderStack,
   threadRuntimeCanArchive,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
@@ -52,7 +53,9 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import {
+  type EnvironmentId,
   type EnvironmentMachineKind,
+  type ProjectId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -70,6 +73,7 @@ import {
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
+  GripVerticalIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -137,7 +141,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -253,16 +257,8 @@ import {
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button, InlineButton } from "./ui/button";
-import {
-  Combobox,
-  ComboboxEmpty,
-  ComboboxSearchInput,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxPopup,
-  ComboboxTrigger,
-  useComboboxFilter,
-} from "./ui/combobox";
+import { useComboboxFilter } from "./ui/combobox";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
@@ -348,53 +344,13 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
-function SidebarProviderStack(props: {
+// AdelisOne: the chat list is a Claude/ChatGPT-style surface for non-technical
+// users, so rows do not badge which AI provider/model backs each conversation.
+function SidebarProviderStack(_props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
 }) {
-  const stack = resolveThreadProviderStack(props.thread);
-  const currentInstanceId = stack[stack.length - 1]!;
-  const currentEntry = props.providerEntryByInstanceId.get(currentInstanceId) ?? null;
-  if (currentEntry === null) return null;
-  const showInstanceBadge = shouldShowInstanceBadge(
-    currentEntry,
-    props.providerEntryByInstanceId.values(),
-  );
-  const current = (
-    <ProviderInstanceIcon
-      driverKind={currentEntry.driverKind}
-      displayName={currentEntry.displayName}
-      accentColor={currentEntry.accentColor}
-      acpRegistryAgentId={currentEntry.acpRegistryAgentId}
-      acpRegistryIconUrl={currentEntry.acpRegistryIconUrl}
-      showBadge={showInstanceBadge}
-      // Glyph dims, badge stays saturated; offset matches the composer trigger.
-      iconClassName="size-3.5 opacity-60"
-      badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
-    />
-  );
-  if (stack.length === 1) {
-    return <span className="inline-flex shrink-0 items-center">{current}</span>;
-  }
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
-      {stack.slice(0, -1).map((instanceId) => {
-        const entry = props.providerEntryByInstanceId.get(instanceId);
-        if (entry === undefined) return null;
-        return (
-          <ProviderInstanceIcon
-            key={instanceId}
-            driverKind={entry.driverKind}
-            displayName={entry.displayName}
-            acpRegistryAgentId={entry.acpRegistryAgentId}
-            acpRegistryIconUrl={entry.acpRegistryIconUrl}
-            iconClassName="size-3 opacity-35 grayscale"
-          />
-        );
-      })}
-      <span className="relative z-10 inline-flex items-center">{current}</span>
-    </span>
-  );
+  return null;
 }
 
 function SidebarThreadTooltip({
@@ -641,6 +597,95 @@ function SortableThreadRow(props: {
     [listeners, setNodeRef, transform, transition, isDragging, props.contextDrag],
   );
   return props.children(bag);
+}
+
+// AdelisOne: a draggable project row in the project picker. This is a plain
+// list row (not a combobox item), so dnd-kit owns the pointer and drag works;
+// clicking the label selects the project, the grip reorders, the gear opens
+// project settings.
+function SortableProjectRow(props: {
+  readonly item: { readonly value: string; readonly label: string };
+  readonly project: SidebarProjectSnapshot;
+  readonly selected: boolean;
+  readonly showEnvironment: boolean;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
+  readonly onSelect: () => void;
+  readonly onSettings: (
+    event: ReactMouseEvent<HTMLElement>,
+    project: SidebarProjectSnapshot,
+  ) => void;
+}) {
+  const {
+    item,
+    project,
+    selected,
+    showEnvironment,
+    primaryEnvironmentId,
+    machineByEnvironmentId,
+    onSelect,
+    onSettings,
+  } = props;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.value,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+        opacity: isDragging ? 0.6 : undefined,
+        position: "relative",
+        zIndex: isDragging ? 1 : undefined,
+      }}
+      className={cn(
+        "flex min-h-7 items-center gap-2 rounded-sm px-1.5 py-1 text-sm",
+        selected ? "bg-foreground/[0.08] text-foreground" : "hover:bg-accent",
+      )}
+      onContextMenu={(event) => onSettings(event, project)}
+    >
+      <span
+        aria-label={`Reorder ${project.displayName}`}
+        className="flex shrink-0 cursor-grab touch-none items-center text-muted-foreground active:cursor-grabbing"
+        {...attributes}
+        {...listeners}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          listeners?.onPointerDown?.(event);
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <GripVerticalIcon className="size-3.5" />
+      </span>
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none"
+      >
+        <ProjectFavicon project={project} className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      </button>
+      {showEnvironment ? (
+        <ProjectEnvironmentBadge
+          group={project}
+          primaryEnvironmentId={primaryEnvironmentId}
+          machineByEnvironmentId={machineByEnvironmentId}
+        />
+      ) : null}
+      <Button
+        size="icon-xs"
+        variant="ghost-muted"
+        tabIndex={-1}
+        title={`Project settings for ${project.displayName}`}
+        className="ml-auto shrink-0"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => onSettings(event, project)}
+      >
+        <SettingsIcon className="size-3.5" />
+      </Button>
+    </div>
+  );
 }
 
 // Unsent work shares one look: the new-thread draft rows and thread rows
@@ -1936,7 +1981,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           }
         >
           {accessibleTitle}
-          <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
+          <div className="relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project ? (
@@ -2107,47 +2152,49 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 </span>
               ) : null}
             </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* Always the branch. The plan step used to take this slot while
+            {thread.branch || terminalStatusIcon || prBadge || diff || isRemote ? (
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+                {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
-              {thread.branch ? (
-                <>
-                  <ThreadWorktreeIndicator thread={thread} />
-                  <span className="flex min-w-0 flex-1 text-muted-foreground/40">
-                    <MiddleTruncate value={thread.branch} showTitle={false} />
-                  </span>
-                </>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {terminalStatusIcon}
-              {prBadge}
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
-                  <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
-                </span>
-              ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
-                {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={props.environmentMachine}
-                      className="size-3.5"
-                    />
+                {thread.branch ? (
+                  <>
+                    <ThreadWorktreeIndicator thread={thread} />
+                    <span className="flex min-w-0 flex-1 text-muted-foreground/40">
+                      <MiddleTruncate value={thread.branch} showTitle={false} />
+                    </span>
+                  </>
+                ) : (
+                  <span className="flex-1" />
+                )}
+                {terminalStatusIcon}
+                {prBadge}
+                {diff ? (
+                  <span className="shrink-0 font-mono">
+                    <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
+                    <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
                   </span>
                 ) : null}
-                <SidebarProviderStack
-                  thread={thread}
-                  providerEntryByInstanceId={props.providerEntryByInstanceId}
-                />
-              </span>
-            </div>
+                <span
+                  aria-hidden
+                  className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+                >
+                  {isRemote ? (
+                    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                      <EnvironmentMachineIcon
+                        aria-hidden
+                        kind={props.environmentMachine}
+                        className="size-3.5"
+                      />
+                    </span>
+                  ) : null}
+                  <SidebarProviderStack
+                    thread={thread}
+                    providerEntryByInstanceId={props.providerEntryByInstanceId}
+                  />
+                </span>
+              </div>
+            ) : null}
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
@@ -2331,6 +2378,16 @@ export default function Sidebar() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  // AdelisOne: drag-and-drop reordering of projects in the picker. Reuses the
+  // persisted projectOrder + reorderProjects reducer; dragging switches the
+  // sort to manual so the arranged order takes effect and sticks.
+  const updateClientSettings = useUpdateClientSettings();
+  const reorderProjectOrder = useUiStateStore((store) => store.reorderProjects);
+  // A small activation distance lets a plain click still select the project,
+  // while a drag past the threshold reorders.
+  const projectPickerSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -2348,6 +2405,7 @@ export default function Sidebar() {
     markThreadUnread,
     archiveThread,
     deleteThread,
+    moveThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -2553,11 +2611,38 @@ export default function Sidebar() {
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
     [projectGroups],
   );
-  const selectedProjectScopeItem = useMemo(
-    () =>
-      projectScopeItems.find((item) => item.value === (projectScopeKey ?? "all")) ??
-      projectScopeItems[0]!,
-    [projectScopeItems, projectScopeKey],
+  const reorderProjectInPicker = useCallback(
+    (fromProjectKey: string, toProjectKey: string) => {
+      if (fromProjectKey === toProjectKey) return;
+      const fromGroup = projectGroupByScopeKey.get(fromProjectKey);
+      const toGroup = projectGroupByScopeKey.get(toProjectKey);
+      if (!fromGroup || !toGroup) return;
+      // Manual sort is what makes the arranged order win; turn it on the first
+      // time a user drags, so reordering simply works without a settings trip.
+      if (sidebarProjectSortOrder !== "manual") {
+        updateClientSettings({ sidebarProjectSortOrder: "manual" });
+      }
+      reorderProjectOrder(
+        orderedProjects.map(getProjectOrderKey),
+        fromGroup.memberProjects.map((member) => member.physicalProjectKey),
+        toGroup.memberProjects.map((member) => member.physicalProjectKey),
+      );
+    },
+    [
+      orderedProjects,
+      projectGroupByScopeKey,
+      reorderProjectOrder,
+      sidebarProjectSortOrder,
+      updateClientSettings,
+    ],
+  );
+  const handleProjectPickerDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      reorderProjectInPicker(String(active.id), String(over.id));
+    },
+    [reorderProjectInPicker],
   );
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
@@ -2579,6 +2664,15 @@ export default function Sidebar() {
           projectScopeFilter.contains(item, query, (candidate) => candidate.label),
       }),
     [projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
+  );
+  // Only real projects are sortable; "All projects" has no project behind it.
+  // Order mirrors what's rendered so dnd-kit's indices line up.
+  const sortableProjectKeys = useMemo(
+    () =>
+      filteredProjectScopeItems
+        .filter((item) => projectGroupByScopeKey.has(item.value))
+        .map((item) => item.value),
+    [filteredProjectScopeItems, projectGroupByScopeKey],
   );
   const scopedProjectGroup = useMemo(
     () =>
@@ -2653,10 +2747,6 @@ export default function Sidebar() {
   );
   // Anchor for the scope popup: the header search field, not its icon trigger.
   const headerSearchRef = useRef<HTMLDivElement | null>(null);
-  // Safari can send a click after Ctrl+click opens settings. Ignore that one
-  // selection, then clear the guard when the picker opens again.
-  const suppressNextScopeChangeRef = useRef(false);
-  const highlightedProjectScopeKeyRef = useRef<string | null>(null);
   const handleProjectSettings = useCallback(
     (
       event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
@@ -2664,7 +2754,6 @@ export default function Sidebar() {
     ) => {
       event.preventDefault();
       event.stopPropagation();
-      suppressNextScopeChangeRef.current = true;
       dispatchProjectScopeMenu({ type: "project-settings-opened" });
       openProjectSettings(projectGroup);
     },
@@ -4202,6 +4291,14 @@ export default function Sidebar() {
         pinnedCount: pinnedSelectedThreads.length,
       });
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      // AdelisOne: destinations for bulk "Move to project" — projects in the
+      // environment the selection lives in (imported chats share one).
+      const selectionEnvironmentId = selectedThreads[0]?.environmentId ?? null;
+      const moveTargets = selectionEnvironmentId
+        ? projects
+            .filter((project) => project.environmentId === selectionEnvironmentId)
+            .map((project) => ({ projectId: project.id, label: project.title }))
+        : [];
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -4224,12 +4321,48 @@ export default function Sidebar() {
               : []),
             ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
+            ...(moveTargets.length > 0
+              ? [
+                  {
+                    id: "move",
+                    label: `Move to project (${count})`,
+                    children: moveTargets.map((target) => ({
+                      id: `move:${target.projectId}`,
+                      label: target.label,
+                    })),
+                  },
+                ]
+              : []),
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],
           position,
         ),
       );
       if (clicked._tag === "Failure") return;
+      if (clicked.value?.startsWith("move:")) {
+        const toProjectId = clicked.value.slice("move:".length) as ProjectId;
+        clearSelection();
+        let firstError: unknown = null;
+        for (const thread of selectedThreads) {
+          const result = await moveThread(
+            scopeThreadRef(thread.environmentId, thread.id),
+            toProjectId,
+          );
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            firstError ??= squashAtomCommandFailure(result);
+          }
+        }
+        if (firstError !== null) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to move some threads",
+              description: firstError instanceof Error ? firstError.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
       if (clicked.value?.startsWith("snooze:")) {
         const preset =
           clicked.value === "snooze:custom"
@@ -4360,7 +4493,9 @@ export default function Sidebar() {
       confirmThreadDelete,
       deleteThread,
       markThreadUnread,
+      moveThread,
       performSnooze,
+      projects,
       removeFromSelection,
       serverConfigs,
       settleThreads,
@@ -4457,6 +4592,13 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const moveTargets = projects
+          .filter((project) => project.environmentId === thread.environmentId)
+          .map((project) => ({
+            projectId: project.id,
+            label: project.title,
+            isCurrent: project.id === thread.projectId,
+          }));
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -4490,6 +4632,8 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              // Only worth showing when there's somewhere else to move it.
+              moveTargets: moveTargets.length > 1 ? moveTargets : [],
             }),
             position,
           ),
@@ -4501,6 +4645,21 @@ export default function Sidebar() {
               ? await requestCustomSnooze()
               : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (clicked.value?.startsWith("move:")) {
+          const toProjectId = clicked.value.slice("move:".length) as ProjectId;
+          const result = await moveThread(threadRef, toProjectId);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to move thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
           return;
         }
         switch (clicked.value) {
@@ -4695,9 +4854,11 @@ export default function Sidebar() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      moveThread,
       openProjectSettings,
       projectScopeKey,
       projectByKey,
+      projects,
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,
@@ -4838,31 +4999,11 @@ export default function Sidebar() {
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
               projectScope={
-                <Combobox
-                  items={projectScopeItems}
-                  filteredItems={filteredProjectScopeItems}
-                  autoHighlight
-                  itemToStringLabel={(item) => item.label}
-                  isItemEqualToValue={(a, b) => a.value === b.value}
+                <Popover
                   open={projectScopeMenuState.open}
-                  onOpenChange={(open) => {
-                    if (open) suppressNextScopeChangeRef.current = false;
-                    dispatchProjectScopeMenu({ type: "open-changed", open });
-                  }}
-                  onItemHighlighted={(item) => {
-                    highlightedProjectScopeKeyRef.current = item?.value ?? null;
-                  }}
-                  value={selectedProjectScopeItem}
-                  onValueChange={(item) => {
-                    if (suppressNextScopeChangeRef.current) {
-                      suppressNextScopeChangeRef.current = false;
-                      return;
-                    }
-                    if (!item) return;
-                    setProjectScopeKey(item.value === "all" ? null : item.value);
-                  }}
+                  onOpenChange={(open) => dispatchProjectScopeMenu({ type: "open-changed", open })}
                 >
-                  <ComboboxTrigger
+                  <PopoverTrigger
                     render={
                       <SidebarHeaderIconButton
                         label={
@@ -4882,92 +5023,98 @@ export default function Sidebar() {
                     ) : (
                       <FolderIcon className="size-4" />
                     )}
-                  </ComboboxTrigger>
-                  <ComboboxPopup
+                  </PopoverTrigger>
+                  <PopoverPopup
                     align="start"
-                    // Anchored to the search field, not the 28px trigger: the
-                    // popup opens under the field, is at least as wide as it,
-                    // and grows to fit project names up to a cap, past which
-                    // the rows truncate.
+                    // Anchored to the search field, not the 28px trigger, so the
+                    // popup opens under the field and is at least as wide.
                     anchor={headerSearchRef}
+                    padding="none"
                     className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
                   >
-                    <ComboboxSearchInput
-                      aria-label="Search projects"
-                      placeholder="Search projects..."
-                      value={projectScopeMenuState.query}
-                      onKeyDown={(event) => {
-                        if (
-                          event.defaultPrevented ||
-                          event.nativeEvent.isComposing ||
-                          event.ctrlKey ||
-                          event.altKey ||
-                          event.metaKey ||
-                          (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
-                        ) {
-                          return;
+                    <div className="flex max-h-[min(24rem,60vh)] flex-col overflow-hidden p-1">
+                      <input
+                        aria-label="Search projects"
+                        placeholder="Search projects..."
+                        value={projectScopeMenuState.query}
+                        autoFocus
+                        onChange={(event) =>
+                          dispatchProjectScopeMenu({
+                            type: "query-changed",
+                            query: event.target.value,
+                          })
                         }
-                        // Combobox items use virtual focus: keyboard events
-                        // stay on this input, not on the highlighted option.
-                        const scopeKey = highlightedProjectScopeKeyRef.current;
-                        const project = scopeKey ? projectGroupByScopeKey.get(scopeKey) : null;
-                        if (project) handleProjectSettings(event, project);
-                      }}
-                      onChange={(event) =>
-                        dispatchProjectScopeMenu({
-                          type: "query-changed",
-                          query: event.target.value,
-                        })
-                      }
-                    />
-                    <ComboboxEmpty>No matching projects.</ComboboxEmpty>
-                    <ComboboxList>
-                      {(item: (typeof projectScopeItems)[number]) => {
-                        const project = projectGroupByScopeKey.get(item.value) ?? null;
-                        return (
-                          <ComboboxItem
-                            key={item.value}
-                            hideIndicator
-                            value={item}
-                            onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
-                            }}
-                          >
-                            {project ? (
-                              <ProjectFavicon project={project} className="size-4 shrink-0" />
+                        className="mb-1 w-full rounded-sm border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-primary"
+                      />
+                      <DndContext
+                        sensors={projectPickerSensors}
+                        collisionDetection={closestCenter}
+                        modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                        onDragEnd={handleProjectPickerDragEnd}
+                      >
+                        <SortableContext
+                          items={sortableProjectKeys}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          <div className="min-h-0 flex-1 overflow-y-auto">
+                            {filteredProjectScopeItems.length === 0 ? (
+                              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                No matching projects.
+                              </div>
                             ) : (
-                              <FolderIcon className="size-4 shrink-0" />
+                              filteredProjectScopeItems.map((item) => {
+                                const project = projectGroupByScopeKey.get(item.value) ?? null;
+                                if (project) {
+                                  return (
+                                    <SortableProjectRow
+                                      key={item.value}
+                                      item={item}
+                                      project={project}
+                                      selected={(projectScopeKey ?? "all") === item.value}
+                                      showEnvironment={showProjectEnvironments}
+                                      primaryEnvironmentId={primaryEnvironmentId}
+                                      machineByEnvironmentId={environmentMachineById}
+                                      onSelect={() => {
+                                        setProjectScopeKey(item.value);
+                                        dispatchProjectScopeMenu({
+                                          type: "open-changed",
+                                          open: false,
+                                        });
+                                      }}
+                                      onSettings={handleProjectSettings}
+                                    />
+                                  );
+                                }
+                                return (
+                                  <button
+                                    key={item.value}
+                                    type="button"
+                                    onClick={() => {
+                                      setProjectScopeKey(null);
+                                      dispatchProjectScopeMenu({
+                                        type: "open-changed",
+                                        open: false,
+                                      });
+                                    }}
+                                    className={cn(
+                                      "flex min-h-7 w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-sm",
+                                      (projectScopeKey ?? "all") === item.value
+                                        ? "bg-foreground/[0.08] text-foreground"
+                                        : "hover:bg-accent",
+                                    )}
+                                  >
+                                    <FolderIcon className="size-4 shrink-0" />
+                                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                                  </button>
+                                );
+                              })
                             )}
-                            <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
-                            {project ? (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                  void handleProjectSettings(event, project);
-                                }}
-                              >
-                                <SettingsIcon className="size-3.5" />
-                              </Button>
-                            ) : null}
-                          </ComboboxItem>
-                        );
-                      }}
-                    </ComboboxList>
-                  </ComboboxPopup>
-                </Combobox>
+                          </div>
+                        </SortableContext>
+                      </DndContext>
+                    </div>
+                  </PopoverPopup>
+                </Popover>
               }
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}
@@ -5182,9 +5329,13 @@ export default function Sidebar() {
                               null
                             }
                             projectDisplayName={
-                              projectDisplayNameByKey.get(
-                                `${thread.environmentId}:${thread.projectId}`,
-                              ) ?? null
+                              // Scoped to one project: the picker already names it
+                              // at the top, so repeating it on every row is noise.
+                              projectScopeKey !== null
+                                ? null
+                                : (projectDisplayNameByKey.get(
+                                    `${thread.environmentId}:${thread.projectId}`,
+                                  ) ?? null)
                             }
                             providerEntryByInstanceId={
                               providerEntriesByEnvironment.get(thread.environmentId) ??
@@ -5342,8 +5493,8 @@ export default function Sidebar() {
                                 )}
                                 label={
                                   settledShelfExpanded
-                                    ? "Settled"
-                                    : `Settled (${settledThreads.length})`
+                                    ? "Chats"
+                                    : `Chats (${settledThreads.length})`
                                 }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
@@ -5359,7 +5510,7 @@ export default function Sidebar() {
                               <SidebarSectionPlaceholder
                                 key="settled-placeholder"
                                 marker="settled-placeholder"
-                                label="Settled"
+                                label="Chats"
                                 showHint={
                                   from !== null &&
                                   (renderedSettledThreads.length === 0 ||

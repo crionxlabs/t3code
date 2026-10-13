@@ -141,14 +141,25 @@ export const REPLACEMENTS = {
     },
   ],
 
-  // ── Sidebar: the Settled section is labeled Projects ──────────────────
+  // ── Sidebar: the Settled section is labeled Chats ─────────────────────
   "apps/web/src/components/Sidebar.tsx": [
-    { find: '? "Settled"', replace: '? "Projects"' },
+    { find: '? "Settled"', replace: '? "Chats"' },
     {
       find: ": `Settled (${settledThreads.length})`",
-      replace: ": `Projects (${settledThreads.length})`",
+      replace: ": `Chats (${settledThreads.length})`",
     },
-    { find: 'label="Settled"', replace: 'label="Projects"' },
+    { find: 'label="Settled"', replace: 'label="Chats"' },
+  ],
+
+  // ── An idle chat is a finished chat, not "Waiting" ─────────────────────
+  // In a chat app, an idle thread is a done conversation (your turn), not
+  // pending work. Show it as a normal/done row (date) instead of the
+  // coding-tool "Waiting" status, so imported chats don't all read as pending.
+  "apps/web/src/components/Sidebar.logic.ts": [
+    {
+      find: '  if (thread.runtime?.status === "idle") {\n    return "waiting";\n  }',
+      replace: '  if (thread.runtime?.status === "idle") {\n    return "ready";\n  }',
+    },
   ],
 
   // ── Codex sign-in page: the brand line above the message ───────────────
@@ -398,9 +409,10 @@ export const REPLACEMENTS = {
     },
   ],
 
-  // ── Imported Library button (adelisone/web/ImportedLibraryPanel.tsx) ────
-  // A sidebar-header button opening the Memory / Artifacts / Project docs views
-  // for imported reference content, kept separate from the thread list.
+  // ── Memory / Artifacts / Projects button (adelisone/web/ImportedLibraryPanel.tsx) ────
+  // A sidebar-header button opening the employee's own Memory / Artifacts /
+  // Projects views for imported reference content, kept separate from the
+  // thread list. "Library" is reserved for the company-wide shared store.
   "apps/web/src/components/sidebar/SidebarThreadHeader.tsx": [
     {
       find: 'import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";',
@@ -421,12 +433,12 @@ export const REPLACEMENTS = {
     {
       find: 'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";',
       replace:
-        'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";\nimport { a1ImportChatsRouteLayer, a1LibraryRouteLayer, a1LibraryUpdateRouteLayer } from "~adelisone/server/importChatsRoute.ts";',
+        'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";\nimport { a1ImportChatsRouteLayer, a1LibraryRouteLayer, a1LibraryUpdateRouteLayer, a1RelocateSessionRouteLayer } from "~adelisone/server/importChatsRoute.ts";',
     },
     {
       find: "    attachmentUploadRouteLayer,",
       replace:
-        "    attachmentUploadRouteLayer,\n    a1ImportChatsRouteLayer,\n    a1LibraryRouteLayer,\n    a1LibraryUpdateRouteLayer,",
+        "    attachmentUploadRouteLayer,\n    a1ImportChatsRouteLayer,\n    a1LibraryRouteLayer,\n    a1LibraryUpdateRouteLayer,\n    a1RelocateSessionRouteLayer,",
     },
   ],
 
@@ -486,9 +498,12 @@ export const REPLACEMENTS = {
     {
       // Hide the "No project" chip on loose chats in simplified mode (claude.ai
       // shows no project label on standalone chats). Real project names stay.
+      // Also gate the favicon on projectDisplayName so that when the sidebar is
+      // scoped to one project (the row label is nulled out), the favicon drops
+      // with it — the project is already named once at the top of the list.
       find: '              {props.project ? (\n                <ProjectFavicon project={props.project} className="size-4 shrink-0" />\n              ) : null}\n              {props.projectDisplayName ? (',
       replace:
-        '              {props.project && !(readSimplifiedUi() && props.projectDisplayName === "No project") ? (\n                <ProjectFavicon project={props.project} className="size-4 shrink-0" />\n              ) : null}\n              {props.projectDisplayName && !(readSimplifiedUi() && props.projectDisplayName === "No project") ? (',
+        '              {props.project && props.projectDisplayName && !(readSimplifiedUi() && props.projectDisplayName === "No project") ? (\n                <ProjectFavicon project={props.project} className="size-4 shrink-0" />\n              ) : null}\n              {props.projectDisplayName && !(readSimplifiedUi() && props.projectDisplayName === "No project") ? (',
     },
     {
       find: "  const handleNewThreadClick = useCallback(\n    (event?: ReactMouseEvent) => {",
@@ -499,6 +514,22 @@ export const REPLACEMENTS = {
       find: "    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],",
       replace:
         "    [isMobile, newThreadContext, projectGroups.length, setOpenMobile, a1Scratch, a1Simplified, a1PrimaryEnv],",
+    },
+    {
+      // Compact chat list: in simplified mode every chat is a slim single-line
+      // row (title + time), like Claude/ChatGPT. Only a live "working" thread
+      // stays a full card so its streaming status stays visible. Upstream T3
+      // keeps full cards for active/pinned.
+      find: '                        const isCard =\n                          section === "active" || section === "pinned" || section === "working";',
+      replace:
+        '                        const isCard = readSimplifiedUi()\n                          ? section === "working"\n                          : section === "active" || section === "pinned" || section === "working";',
+    },
+    {
+      // Slim row favicon: drop it when the row has no project label (i.e. the
+      // list is scoped to one project), matching the card row's behavior.
+      find: '              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}',
+      replace:
+        '              {props.project && props.projectDisplayName ? <ProjectFavicon project={props.project} className="size-4" /> : null}',
     },
   ],
   "apps/web/src/components/NoProjectsHero.tsx": [

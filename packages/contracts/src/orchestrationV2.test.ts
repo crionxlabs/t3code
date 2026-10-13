@@ -483,6 +483,28 @@ describe("orchestration V2 contracts", () => {
     ).toThrow();
   });
 
+  it("decodes thread.move with a required destination project", () => {
+    const command = decodeOrchestrationV2Command({
+      type: "thread.move",
+      commandId: "command-move-1",
+      threadId: "thread-1",
+      toProjectId: "project-dest-1",
+    });
+    expect(command.type).toBe("thread.move");
+    if (command.type !== "thread.move") throw new Error("expected thread.move");
+    expect(command.threadId).toBe(ThreadId.make("thread-1"));
+    expect(command.toProjectId).toBe(ProjectId.make("project-dest-1"));
+
+    // The destination is required — a move without it is not a valid command.
+    expect(() =>
+      decodeOrchestrationV2Command({
+        type: "thread.move",
+        commandId: "command-move-2",
+        threadId: "thread-1",
+      }),
+    ).toThrow();
+  });
+
   it("decodes durable created-thread timeline records", () => {
     const command = decodeOrchestrationV2Command({
       type: "thread.created.record",

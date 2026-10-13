@@ -1,8 +1,10 @@
 /**
- * AdelisOne: the Imported Library — reference content (not conversations)
- * brought in from a Claude export. Memory, artifacts, and project docs each get
- * their own view here, kept out of the thread list. Opened from a sidebar
- * header button; reads adelisone/server/importChatsRoute.ts's GET /api/a1/library.
+ * AdelisOne: the employee's own Memory and Artifacts — reference content (not
+ * conversations) brought in from a Claude export, kept out of the thread list.
+ * This is the user's local data, not the company-wide Library (that term is
+ * reserved for the shared store). Imported Claude projects are not shown here —
+ * they become real A1 projects in the project picker.
+ * Opened from a sidebar header button; reads adelisone/server/importChatsRoute.ts.
  */
 import { useCallback, useEffect, useState } from "react";
 
@@ -18,13 +20,12 @@ import {
 } from "../../apps/web/src/components/ui/dialog";
 
 type Item = { id: string; title: string; date: string; content: string; group?: string };
-type Library = { memory: Item[]; artifacts: Item[]; docs: Item[] };
-type Tab = "memory" | "artifacts" | "docs";
+type Library = { memory: Item[]; artifacts: Item[] };
+type Tab = "memory" | "artifacts";
 
 const TAB_LABELS: Record<Tab, string> = {
   memory: "Memory",
   artifacts: "Artifacts",
-  docs: "Project docs",
 };
 
 // Inline so this file needs no bare "lucide-react" import (it lives outside apps/web).
@@ -49,7 +50,7 @@ export function ImportedLibraryButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <SidebarHeaderIconButton label="Library" onClick={() => setOpen(true)}>
+      <SidebarHeaderIconButton label="Memory & Artifacts" onClick={() => setOpen(true)}>
         <BookIcon />
       </SidebarHeaderIconButton>
       {open ? <LibraryDialog open={open} onOpenChange={setOpen} /> : null}
@@ -131,7 +132,6 @@ function LibraryDialog({
       setLibrary({
         memory: data.memory ?? [],
         artifacts: data.artifacts ?? [],
-        docs: data.docs ?? [],
       });
     } catch (cause) {
       setError(String(cause));
@@ -193,15 +193,15 @@ function LibraryDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Library</DialogTitle>
+              <DialogTitle>{TAB_LABELS[tab]}</DialogTitle>
               <DialogDescription>
-                Memory, artifacts, and project documents imported from Claude — kept separate from
-                your conversations.
+                Memory and artifacts imported from Claude — kept separate from your conversations.
+                Imported projects live in the project picker.
               </DialogDescription>
             </DialogHeader>
 
             <div className="flex gap-1 border-b border-border">
-              {(["memory", "artifacts", "docs"] as const).map((t) => (
+              {(["memory", "artifacts"] as const).map((t) => (
                 <button
                   key={t}
                   type="button"

@@ -1,13 +1,21 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ChatImageAttachment,
+  type ChatAttachment,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionImportSource,
   AgentSessionScanError,
   AgentSessionSource,
+  CommandId,
   EventId,
   MessageId,
   ProjectId,
@@ -31,6 +39,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { attachmentRelativePath, createDeterministicAttachmentId } from "../attachmentStore.ts";
+import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
+import * as ServerConfig from "../config.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -86,10 +97,61 @@ function dateTime(value: string): DateTime.Utc {
   return DateTime.makeUnsafe(value);
 }
 
+const decodeChatImageAttachment = Schema.decodeUnknownOption(ChatImageAttachment);
+
+/**
+ * AdelisOne import: write a message's inline base64 images into the chat
+ * attachment store and return chat attachments that reference them, so imported
+ * images render inline exactly like uploaded ones. Ids are deterministic from
+ * (threadId, message index, image index) so re-import overwrites in place.
+ */
+function materializeMessageAttachments(input: {
+  readonly attachmentsDir: string;
+  readonly threadId: ThreadId;
+  readonly index: number;
+  readonly message: AgentSessionScanner.AgentSessionThreadMessage;
+}): ReadonlyArray<ChatAttachment> {
+  const out: Array<ChatAttachment> = [];
+  const list = input.message.attachments ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const raw = list[i];
+    if (raw === undefined || !/^image\//i.test(raw.mimeType)) continue;
+    const bytes = Buffer.from(raw.data, "base64");
+    if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) continue;
+    const id = createDeterministicAttachmentId(input.threadId, `${input.index}:${i}`);
+    if (id === null) continue;
+    const decoded = decodeChatImageAttachment({
+      type: "image",
+      id,
+      name: raw.name.slice(0, 255) || "image",
+      mimeType: raw.mimeType,
+      sizeBytes: bytes.byteLength,
+    });
+    if (Option.isNone(decoded)) continue;
+    const attachment = decoded.value;
+    const relativePath = attachmentRelativePath(attachment);
+    if (relativePath === null) continue;
+    const filePath = resolveAttachmentRelativePath({
+      attachmentsDir: input.attachmentsDir,
+      relativePath,
+    });
+    if (filePath === null) continue;
+    try {
+      NodeFS.mkdirSync(NodePath.dirname(filePath), { recursive: true });
+      NodeFS.writeFileSync(filePath, bytes);
+    } catch {
+      continue;
+    }
+    out.push(attachment);
+  }
+  return out;
+}
+
 function messageEvents(input: {
   readonly threadId: ThreadId;
   readonly index: number;
   readonly message: AgentSessionScanner.AgentSessionThreadMessage;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
 }): ReadonlyArray<OrchestrationV2DomainEvent> {
   const ordinal = input.index + 1;
   const suffix = String(input.index).padStart(6, "0");
@@ -107,7 +169,7 @@ function messageEvents(input: {
     nodeId: null,
     role: input.message.role,
     text: input.message.text,
-    attachments: [],
+    attachments: input.attachments,
     streaming: false,
     createdAt: at,
     updatedAt: at,
@@ -138,7 +200,7 @@ function messageEvents(input: {
           messageId,
           inputIntent: "turn_start",
           text: input.message.text,
-          attachments: [],
+          attachments: input.attachments,
         }
       : {
           ...common,
@@ -172,6 +234,7 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const config = yield* ServerConfig.ServerConfig;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -251,15 +314,26 @@ const make = Effect.gen(function* () {
           }
           const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
           if (Option.isSome(existing)) {
-            if (existing.value.thread.projectId !== input.projectId) {
-              return yield* new AgentSessionThreadProjectConflictError({
-                threadId,
-                expectedProjectId: input.projectId,
-                actualProjectId: existing.value.thread.projectId,
-              });
-            }
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
+            }
+            if (existing.value.thread.projectId !== input.projectId) {
+              // Previously imported under a different project (e.g. re-importing
+              // into provider buckets after a loose import). Re-home it to the
+              // project it's being imported into now — its session file for this
+              // run is already in that project's folder, so it stays resumable.
+              yield* orchestrator
+                .dispatch({
+                  type: "thread.move",
+                  commandId: CommandId.make(`${IMPORT_EVENT_PREFIX}:rehome:${threadId}`),
+                  threadId,
+                  toProjectId: input.projectId,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+                  ),
+                );
             }
             yield* runtimes.recordImportedTranscript({ threadId, source });
             return true;
@@ -298,9 +372,13 @@ const make = Effect.gen(function* () {
             createdAt,
             updatedAt,
             archivedAt: null,
-            settledOverride: "settled",
-            settledAt: updatedAt,
-            unsettledAt: null,
+            // AdelisOne: imported conversations come in as normal (active) chats
+            // in the main list, not pre-settled into the bottom shelf. "active"
+            // pins them out of auto-settle so they stay in the list like
+            // claude.ai / ChatGPT, newest first by their real date.
+            settledOverride: "active",
+            settledAt: null,
+            unsettledAt: updatedAt,
             snoozedUntil: null,
             snoozedAt: null,
             pinnedAt: null,
@@ -360,7 +438,17 @@ const make = Effect.gen(function* () {
                 payload: appThread,
               },
               ...thread.messages.flatMap((message, index) =>
-                messageEvents({ threadId, index, message }),
+                messageEvents({
+                  threadId,
+                  index,
+                  message,
+                  attachments: materializeMessageAttachments({
+                    attachmentsDir: config.attachmentsDir,
+                    threadId,
+                    index,
+                    message,
+                  }),
+                }),
               ),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),

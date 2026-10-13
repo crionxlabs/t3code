@@ -377,6 +377,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.archive":
     case "thread.unarchive":
     case "thread.delete":
+    case "thread.move":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -2315,6 +2316,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly type:
           | "thread.archive"
           | "thread.unarchive"
+          | "thread.move"
           | "thread.settle"
           | "thread.unsettle"
           | "thread.snooze"
@@ -2478,6 +2480,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} changed before pull request discovery.`,
+        });
+      }
+    }
+    if (command.type === "thread.move") {
+      const destination = yield* projects.get(command.toProjectId).pipe(mapDispatchError(command));
+      if (Option.isNone(destination) || destination.value.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Destination project ${command.toProjectId} does not exist.`,
+        });
+      }
+      // A thread with its own worktree keeps that worktree under the old
+      // project's repo; moving it would split the two. Loose/imported threads
+      // (worktreePath null) are the intended case and move freely.
+      if (thread.worktreePath !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a worktree and cannot be moved between projects.`,
         });
       }
     }
@@ -2788,6 +2810,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
+        case "thread.move":
+          return { ...thread, projectId: command.toProjectId, updatedAt: now };
         case "thread.metadata.update": {
           const previousRecovery =
             thread.limitRecovery?.runId === command.limitRecovery?.runId &&
@@ -3095,6 +3119,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.active-reordered" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
+        case "thread.move":
         case "thread.metadata.update":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
@@ -9498,6 +9523,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       case "thread.archive":
       case "thread.unarchive":
+      case "thread.move":
       case "thread.settle":
       case "thread.unsettle":
       case "thread.snooze":
