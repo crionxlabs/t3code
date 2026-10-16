@@ -76,6 +76,25 @@ function toRepoRelative(id) {
   return relative.startsWith("..") ? undefined : relative;
 }
 
+/** A package import such as "effect/Effect", as opposed to a path or a Node builtin. */
+/** @param {string} source */
+function isBarePackageImport(source) {
+  return (
+    !/^(?:[./\\]|\0|~|node:|data:|virtual:|vite\/)/u.test(source) && !NodePath.isAbsolute(source)
+  );
+}
+
+/** @param {string} id */
+function isAdelisoneFile(id) {
+  return toRepoRelative(id)?.startsWith("adelisone/") ?? false;
+}
+
+/** The file package imports from adelisone/ resolve against. */
+/** @param {"web" | "desktop" | "server"} target */
+function appPackageJson(target) {
+  return NodePath.join(repoRoot, "apps", target, "package.json");
+}
+
 /**
  * @param {"web" | "desktop" | "server"} target
  * @returns {any} A Vite plugin; also a valid Rolldown plugin for `vp pack`.
@@ -93,17 +112,28 @@ export function adelisone(target) {
     // Lets override patches import AdelisOne modules ("~adelisone/x" resolves
     // under adelisone/, with adelisone/web/ as a fallback for bare names),
     // keeping A1 code in its own folder.
-    /** @param {string} source */
-    resolveId(source) {
-      if (!source.startsWith("~adelisone/")) return null;
-      const rest = source.slice("~adelisone/".length);
-      for (const base of [
-        NodePath.join(repoRoot, "adelisone", rest),
-        NodePath.join(repoRoot, "adelisone", "web", rest),
-      ]) {
-        for (const file of [base, `${base}.ts`, `${base}.tsx`, `${base}.mjs`]) {
-          if (NodeFS.existsSync(file) && NodeFS.statSync(file).isFile()) return file;
+    /**
+     * @param {string} source
+     * @param {string | undefined} importer
+     */
+    resolveId(source, importer) {
+      if (source.startsWith("~adelisone/")) {
+        const rest = source.slice("~adelisone/".length);
+        for (const base of [
+          NodePath.join(repoRoot, "adelisone", rest),
+          NodePath.join(repoRoot, "adelisone", "web", rest),
+        ]) {
+          for (const file of [base, `${base}.ts`, `${base}.tsx`, `${base}.mjs`]) {
+            if (NodeFS.existsSync(file) && NodeFS.statSync(file).isFile()) return file;
+          }
         }
+        return null;
+      }
+      // adelisone/ sits outside the app packages, so a bare package import
+      // (effect, react) from one of its files would be looked up from the repo
+      // root, which pnpm leaves empty. Resolve it from the app being built.
+      if (importer && isBarePackageImport(source) && isAdelisoneFile(importer)) {
+        return this.resolve(source, appPackageJson(target), { skipSelf: true });
       }
       return null;
     },
