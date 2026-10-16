@@ -183,7 +183,30 @@ export const REPLACEMENTS = {
   ],
 
   // ── Setup wizard: name, and the Connect step as an advanced option ─────
+  // Startup popup: ask for the invite link until this computer is connected.
+  "apps/web/src/routes/__root.tsx": [
+    {
+      find: 'import { ConfirmDialogHost } from "../components/ConfirmDialogHost";',
+      replace:
+        'import { ConfirmDialogHost } from "../components/ConfirmDialogHost";\nimport { A1ConnectDialogHost } from "~adelisone/web/A1ConnectDialog";',
+    },
+    {
+      find: "          <ConfirmDialogHost />\n          <CustomSnoozeDialogHost />\n          <SlowRpcRequestToastCoordinator />",
+      replace:
+        "          <ConfirmDialogHost />\n          <A1ConnectDialogHost />\n          <CustomSnoozeDialogHost />\n          <SlowRpcRequestToastCoordinator />",
+    },
+  ],
   "apps/web/src/components/onboarding/WelcomeWizard.tsx": [
+    {
+      find: 'import { ScrollArea } from "../ui/scroll-area";',
+      replace:
+        'import { ScrollArea } from "../ui/scroll-area";\nimport { A1AccountCard } from "~adelisone/web/A1AccountCard";',
+    },
+    {
+      find: '      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">\n        <div className="space-y-5 pr-3">\n          {environmentIds.map((environmentId) => (\n            <ConnectedAgentsStep',
+      replace:
+        '      <div className="mt-5 rounded-lg border border-border p-4">\n        <A1AccountCard />\n      </div>\n      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">\n        <div className="space-y-5 pr-3">\n          {environmentIds.map((environmentId) => (\n            <ConnectedAgentsStep',
+    },
     {
       find: '  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");',
       replace: [
@@ -433,12 +456,82 @@ export const REPLACEMENTS = {
     {
       find: 'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";',
       replace:
-        'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";\nimport { a1ImportChatsRouteLayer, a1LibraryRouteLayer, a1LibraryUpdateRouteLayer, a1RelocateSessionRouteLayer } from "~adelisone/server/importChatsRoute.ts";',
+        'import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";\nimport { a1ImportChatsRouteLayer, a1LibraryRouteLayer, a1LibraryUpdateRouteLayer, a1RelocateSessionRouteLayer } from "~adelisone/server/importChatsRoute.ts";\nimport * as A1Account from "~adelisone/server/a1/A1Account.ts";\nimport { a1AccountRouteLayers } from "~adelisone/server/a1/a1Routes.ts";\nimport { watchProviderAccounts } from "~adelisone/server/a1/A1ProviderPolicy.ts";',
     },
     {
       find: "    attachmentUploadRouteLayer,",
       replace:
-        "    attachmentUploadRouteLayer,\n    a1ImportChatsRouteLayer,\n    a1LibraryRouteLayer,\n    a1LibraryUpdateRouteLayer,\n    a1RelocateSessionRouteLayer,",
+        "    attachmentUploadRouteLayer,\n    a1ImportChatsRouteLayer,\n    a1LibraryRouteLayer,\n    a1LibraryUpdateRouteLayer,\n    a1RelocateSessionRouteLayer,\n    a1AccountRouteLayers,",
+    },
+    {
+      // Company AI accounts only: keep each provider's signed-in email current for the turn guard.
+      find: "const ProviderInstallationRefreshLive = Layer.effectDiscard(",
+      replace:
+        "const A1ProviderAccountsLive = Layer.effectDiscard(watchProviderAccounts);\n\nconst ProviderInstallationRefreshLive = Layer.effectDiscard(",
+    },
+    {
+      find: "  ProviderInstallationRefreshLive,\n",
+      replace: "  ProviderInstallationRefreshLive,\n  A1ProviderAccountsLive,\n",
+    },
+    {
+      // One account instance shared by the sign-in routes and the MCP bridge.
+      // Route handlers resolve their services from the runtime services that
+      // back HttpRouter.serve, not from layers provided to the route list, so
+      // the account must live with the other runtime dependencies.
+      find: "  Layer.provideMerge(ServerLifecycleEvents.layer),\n  Layer.provide(NetService.layer),\n);",
+      replace:
+        "  Layer.provideMerge(ServerLifecycleEvents.layer),\n  Layer.provideMerge(A1Account.layer.pipe(Layer.provide(ServerSecretStore.layer))),\n  Layer.provide(NetService.layer),\n);",
+    },
+  ],
+
+  // ── A1 bridge (adelisone/server/a1/) ─────────────────────────────────
+  // The business's central service (adelisone-platform) is reached through
+  // T3's own `t3-code` MCP server, which every provider adapter already
+  // attaches in its native format: its tools and block procedures are
+  // registered there after the employee signs in (A1McpRegistration), its
+  // standing instructions ride the shared runtime-instructions builder, and
+  // the sign-in itself is an OAuth flow served by a1Routes.
+  "apps/server/src/mcp/McpHttpServer.ts": [
+    {
+      find: 'import * as WorktreeMcpService from "./WorktreeMcpService.ts";',
+      replace:
+        'import * as WorktreeMcpService from "./WorktreeMcpService.ts";\nimport { A1McpRegistrationLive } from "~adelisone/server/a1/A1McpRegistration.ts";',
+    },
+    {
+      find: "export const layer = Layer.mergeAll(\n  PreviewToolkitRegistrationLive,",
+      replace:
+        "export const layer = Layer.mergeAll(\n  A1McpRegistrationLive,\n  PreviewToolkitRegistrationLive,",
+    },
+  ],
+  "apps/server/src/orchestration-v2/ProviderSessionManager.ts": [
+    {
+      find: 'import * as McpProviderSession from "../mcp/McpProviderSession.ts";',
+      replace:
+        'import * as McpProviderSession from "../mcp/McpProviderSession.ts";\nimport { a1AssertProviderAccountAllowed } from "~adelisone/server/a1/A1ProviderPolicy.ts";',
+    },
+    {
+      find: "              Effect.andThen(runtime.startTurn(input)),",
+      replace:
+        "              Effect.andThen(\n                a1AssertProviderAccountAllowed({\n                  instanceId: runtime.instanceId,\n                  driver: runtime.driver,\n                  threadId: input.threadId,\n                  providerThreadId: input.providerThread.id,\n                  runId: input.runId,\n                }),\n              ),\n              Effect.andThen(runtime.startTurn(input)),",
+    },
+  ],
+  "apps/server/src/orchestration-v2/ProviderFailure.ts": [
+    {
+      // Show the refusal itself instead of the generic "provider could not start" text.
+      find: '        case "ClaudeBackgroundWorkBlocksQueryReplacementError":\n          return stringField(cause, "message");',
+      replace:
+        '        case "ClaudeBackgroundWorkBlocksQueryReplacementError":\n          return stringField(cause, "message");\n        case "A1ProviderAccountRefused":\n          return stringField(cause, "message");',
+    },
+  ],
+  "apps/server/src/provider/RuntimeInstructions.ts": [
+    {
+      find: "function toSingleLine(value: string): string {",
+      replace:
+        'import { a1RuntimeInstructions } from "~adelisone/server/a1/A1Account.ts";\n\n/** AdelisOne: the platform\'s standing instructions (business memory rules, approvals, connection names), fetched at sign-in. */\nfunction a1Instructions(): string {\n  const text = a1RuntimeInstructions();\n  return text ? `\\n\\n<adelisone>\\n${text}\\n</adelisone>` : "";\n}\n\nfunction toSingleLine(value: string): string {',
+    },
+    {
+      find: "${PULL_REQUEST_LINKING_INSTRUCTIONS}`;\n}",
+      replace: "${PULL_REQUEST_LINKING_INSTRUCTIONS}${a1Instructions()}`;\n}",
     },
   ],
 
@@ -608,7 +701,7 @@ export const REPLACEMENTS = {
     {
       find: 'import { Switch } from "../ui/switch";',
       replace:
-        'import { Switch } from "../ui/switch";\nimport { setSimplifiedUi, useSimplifiedUi } from "~adelisone/simplifiedUi";\nimport { ImportChatsButton } from "~adelisone/web/ImportChatsDialog";',
+        'import { Switch } from "../ui/switch";\nimport { setSimplifiedUi, useSimplifiedUi } from "~adelisone/simplifiedUi";\nimport { ImportChatsButton } from "~adelisone/web/ImportChatsDialog";\nimport { A1AccountCard } from "~adelisone/web/A1AccountCard";',
     },
     // Update track rows removed (both the desktop and hosted variants).
     { find: "{hasDesktopBridge ? (", replace: "{false && hasDesktopBridge ? (" },
@@ -619,7 +712,7 @@ export const REPLACEMENTS = {
     {
       find: "{showNightlyMobileBeta ? <NightlyMobileBetaRow /> : null}",
       replace:
-        '<SettingsRow\n        title="Simplified interface"\n        description="Hides developer surfaces such as branches and source control. The undo system keeps running either way."\n        control={\n          <Switch\n            aria-label="Simplified interface"\n            checked={useSimplifiedUi()}\n            onCheckedChange={setSimplifiedUi}\n          />\n        }\n      />\n      <SettingsRow\n        title="Import conversations"\n        description="Bring in past chats from a claude.ai or ChatGPT data export."\n        control={<ImportChatsButton />}\n      />\n      {showNightlyMobileBeta ? <NightlyMobileBetaRow /> : null}',
+        '<SettingsRow\n        title="AdelisOne account"\n        description="Connects this computer to your company\u2019s AdelisOne server, which holds the data, memory, and approvals every conversation uses."\n      >\n        <A1AccountCard compact />\n      </SettingsRow>\n      <SettingsRow\n        title="Simplified interface"\n        description="Hides developer surfaces such as branches and source control. The undo system keeps running either way."\n        control={\n          <Switch\n            aria-label="Simplified interface"\n            checked={useSimplifiedUi()}\n            onCheckedChange={setSimplifiedUi}\n          />\n        }\n      />\n      <SettingsRow\n        title="Import conversations"\n        description="Bring in past chats from a claude.ai or ChatGPT data export."\n        control={<ImportChatsButton />}\n      />\n      {showNightlyMobileBeta ? <NightlyMobileBetaRow /> : null}',
     },
   ],
 };
