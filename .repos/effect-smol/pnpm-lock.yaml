@@ -222,8 +222,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/effect
       hono:
-        specifier: ^4.13.7
-        version: 4.13.7
+        specifier: ^4.13.11
+        version: 4.13.11
       nodemailer:
         specifier: ^10.0.0
         version: 10.0.0
@@ -933,66 +933,6 @@ importers:
       vitest:
         specifier: 5.0.0
         version: 5.0.0(@edge-runtime/vm@5.0.0)(@opentelemetry/api@1.9.1)(@types/node@26.4.1)(@vitest/coverage-v8@5.0.0)(@vitest/ui@5.0.0)(happy-dom@20.14.0)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
-
-  scratchpad:
-    dependencies:
-      '@effect/ai-anthropic':
-        specifier: workspace:*
-        version: link:../packages/ai/anthropic
-      '@effect/ai-openai':
-        specifier: workspace:*
-        version: link:../packages/ai/openai
-      '@effect/ai-openai-compat':
-        specifier: workspace:*
-        version: link:../packages/ai/openai-compat
-      '@effect/ai-openrouter':
-        specifier: workspace:*
-        version: link:../packages/ai/openrouter
-      '@effect/opentelemetry':
-        specifier: workspace:*
-        version: link:../packages/opentelemetry
-      '@effect/platform-bun':
-        specifier: workspace:*
-        version: link:../packages/platform/bun
-      '@effect/platform-node':
-        specifier: workspace:*
-        version: link:../packages/platform/node
-      '@effect/sql-clickhouse':
-        specifier: workspace:*
-        version: link:../packages/sql/clickhouse
-      '@effect/sql-d1':
-        specifier: workspace:*
-        version: link:../packages/sql/d1
-      '@effect/sql-libsql':
-        specifier: workspace:*
-        version: link:../packages/sql/libsql
-      '@effect/sql-mssql':
-        specifier: workspace:*
-        version: link:../packages/sql/mssql
-      '@effect/sql-mysql2':
-        specifier: workspace:*
-        version: link:../packages/sql/mysql2
-      '@effect/sql-pg':
-        specifier: workspace:*
-        version: link:../packages/sql/pg
-      '@effect/sql-sqlite-bun':
-        specifier: workspace:*
-        version: link:../packages/sql/sqlite-bun
-      '@effect/sql-sqlite-do':
-        specifier: workspace:*
-        version: link:../packages/sql/sqlite-do
-      '@effect/sql-sqlite-node':
-        specifier: workspace:*
-        version: link:../packages/sql/sqlite-node
-      '@effect/sql-sqlite-react-native':
-        specifier: workspace:*
-        version: link:../packages/sql/sqlite-react-native
-      '@effect/sql-sqlite-wasm':
-        specifier: workspace:*
-        version: link:../packages/sql/sqlite-wasm
-      effect:
-        specifier: workspace:*
-        version: link:../packages/effect
 
   scripts:
     dependencies:
@@ -2443,18 +2383,21 @@ packages:
   '@opentelemetry/sdk-trace-base@2.11.0':
     resolution: {integrity: sha512-H19x/TX/LZdqiYOjM7fqtSxwlplC5pgelavqbQdHbhdq0q/AI/TGkM2dfGuuynTXmJPeF2HoZVoPDu+TGoW78A==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
   '@opentelemetry/sdk-trace-node@2.11.0':
     resolution: {integrity: sha512-CuvCMJmZxswhNLlM2LfuLOW3h3fZujA4hsG4B+Sz4dX2zvaXO8Ng74cnDHWD64gLszTlhiG3c0iNUjj4g+0/sA==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
   '@opentelemetry/sdk-trace-web@2.11.0':
     resolution: {integrity: sha512-8hgLI437x8VRKzgUr+WRcHFp9AeaHmveKRsPIMNele9tethgCKprakRRqZCWyt41ilALHATfspUMl1An0OTMUQ==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
@@ -4462,8 +4405,8 @@ packages:
   hermes-parser@0.35.0:
     resolution: {integrity: sha512-9JLjeHxBx8T4CAsydZR49PNZUaix+WpQJwu9p2010lu+7Kwl6D/7wYFFJxoz+aXkaaClp9Zfg6W6/zVlSJORaA==}
 
-  hono@4.13.7:
-    resolution: {integrity: sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==}
+  hono@4.13.11:
+    resolution: {integrity: sha512-/SMX/RQNJn7oNmFwH6DtwDqcrzZU2otm1FD6OJe2cWF6cfy/F8hq0XVBv7xW3FTJshRQwuBnXHDq2kNsdZnshg==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@6.0.0:
@@ -9972,7 +9915,7 @@ snapshots:
     dependencies:
       hermes-estree: 0.35.0
 
-  hono@4.13.7: {}
+  hono@4.13.11: {}
 
   html-encoding-sniffer@6.0.0:
     dependencies:
